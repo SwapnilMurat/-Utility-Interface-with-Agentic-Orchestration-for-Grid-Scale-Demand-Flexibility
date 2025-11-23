@@ -1,0 +1,1022 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, AreaChart, Area } from 'recharts';
+import { Activity, Zap, Battery, AlertTriangle, CheckCircle, Clock, TrendingUp, Database, Play, Download, RefreshCw, Settings } from 'lucide-react';
+
+class GridMLEngine {
+  constructor() {
+    this.forecastModel = null;
+    this.spikeModel = null;
+    this.trainingData = [];
+    this.derCatalogue = [];
+  }
+
+  generateDataset(numDays = 30, numFeeders = 5) {
+    const data = [];
+    const startDate = new Date(Date.now() - numDays * 24 * 60 * 60 * 1000);
+    
+    for (let day = 0; day < numDays; day++) {
+      const currentDate = new Date(startDate.getTime() + day * 24 * 60 * 60 * 1000);
+      const isWeekend = currentDate.getDay() === 0 || currentDate.getDay() === 6;
+      
+      for (let hour = 0; hour < 24; hour++) {
+        for (let minute = 0; minute < 60; minute += 5) {
+          const timestamp = new Date(currentDate.getTime() + hour * 60 * 60 * 1000 + minute * 60 * 1000);
+          
+                      for (let feederId = 1; feederId <= numFeeders; feederId++) {
+            const baseLoad = this.getBaseLoad(hour, isWeekend);
+            const temp = this.getTemperature(hour, currentDate.getMonth() + 1);
+            const weatherImpact = this.calculateWeatherImpact(temp, hour);
+            
+            let load = baseLoad * (0.8 + feederId * 0.08) + weatherImpact;
+            load += (Math.random() - 0.5) * 6; // Noise
+            
+            const spikeChance = hour >= 17 && hour <= 19 ? 0.12 : 0.05;
+            if (Math.random() < spikeChance) {
+              load += Math.random() * 25 + 10;
+            }
+            
+            load = Math.max(40, Math.min(105, load));
+            const spike = load > 95 ? 1 : 0;
+            
+            data.push({
+              timestamp: timestamp.toISOString(),
+              feederId: `Feeder-${feederId}`,
+              hour,
+              minute,
+              dayOfWeek: currentDate.getDay(),
+              isWeekend: isWeekend ? 1 : 0,
+              month: currentDate.getMonth() + 1,
+              temperature: temp,
+              loadPercentage: load,
+              spike
+            });
+          }
+        }
+      }
+    }
+    
+    this.trainingData = data;
+    return data;
+  }
+
+  getBaseLoad(hour, isWeekend) {
+    if (isWeekend) {
+      if (hour < 6) return 60;
+      if (hour < 12) return 75;
+      if (hour < 18) return 80;
+      return 70;
+    } else {
+      if (hour < 6) return 55;
+      if (hour < 9) return 85; // Morning peak
+      if (hour < 17) return 78;
+      if (hour < 20) return 90; // Evening peak
+      return 65;
+    }
+  }
+
+  getTemperature(hour, month) {
+    const baseTemp = 10 + (month - 6) * 2;
+    const dailyVariation = 5 * Math.sin((hour - 6) * Math.PI / 12);
+    return baseTemp + dailyVariation + (Math.random() - 0.5) * 4;
+  }
+
+  calculateWeatherImpact(temp, hour) {
+    if (temp < 10 && hour >= 6 && hour <= 22) {
+      return (10 - temp) * 0.8;
+    }
+    if (temp > 20 && hour >= 12 && hour <= 20) {
+      return (temp - 20) * 0.6;
+    }
+    return 0;
+  }
+
+  generateDERCatalogue(numFeeders = 5) {
+    const derTypes = ['Battery', 'EV Charger', 'HVAC', 'Heat Pump', 'Industrial Load'];
+    const ders = [];
+    
+    for (let feederId = 1; feederId <= numFeeders; feederId++) {
+      const numDers = Math.floor(Math.random() * 3) + 3; // 3-5 DERs per feeder
+      
+      for (let i = 0; i < numDers; i++) {
+        const derType = derTypes[Math.floor(Math.random() * derTypes.length)];
+        let capacity, responseTime;
+        
+        switch(derType) {
+          case 'Battery':
+            capacity = Math.floor(Math.random() * 120) + 30;
+            responseTime = Math.random() * 1.5 + 0.5;
+            break;
+          case 'EV Charger':
+            capacity = Math.floor(Math.random() * 43) + 7;
+            responseTime = Math.random() * 2 + 1;
+            break;
+          case 'HVAC':
+            capacity = Math.floor(Math.random() * 30) + 10;
+            responseTime = Math.random() * 3 + 2;
+            break;
+          case 'Heat Pump':
+            capacity = Math.floor(Math.random() * 22) + 8;
+            responseTime = Math.random() * 2 + 2;
+            break;
+          default: // Industrial Load
+            capacity = Math.floor(Math.random() * 150) + 50;
+            responseTime = Math.random() * 10 + 5;
+        }
+        
+        ders.push({
+          derId: `DER-${feederId}${String(i + 1).padStart(2, '0')}`,
+          feederId: `Feeder-${feederId}`,
+          type: derType,
+          capacityKw: capacity,
+          responseTimeSec: responseTime,
+          availability: Math.random() * 0.13 + 0.85,
+          costPerKwh: Math.random() * 0.1 + 0.05,
+          status: 'Ready'
+        });
+      }
+    }
+    
+    this.derCatalogue = ders;
+    return ders;
+  }
+
+  // Simplified ML training (statistical model for browser)
+  trainModels() {
+    // Calculate statistics for forecasting
+    const feederStats = {};
+    
+    this.trainingData.forEach(record => {
+      const key = `${record.feederId}-${record.hour}`;
+      if (!feederStats[key]) {
+        feederStats[key] = { loads: [], count: 0, sum: 0 };
+      }
+      feederStats[key].loads.push(record.loadPercentage);
+      feederStats[key].sum += record.loadPercentage;
+      feederStats[key].count++;
+    });
+    
+    // Calculate means and std deviations
+    Object.keys(feederStats).forEach(key => {
+      const stat = feederStats[key];
+      stat.mean = stat.sum / stat.count;
+      stat.std = Math.sqrt(
+        stat.loads.reduce((acc, val) => acc + Math.pow(val - stat.mean, 2), 0) / stat.count
+      );
+    });
+    
+    this.forecastModel = { feederStats };
+    
+    // Spike detection thresholds
+    const spikeRecords = this.trainingData.filter(r => r.spike === 1);
+    const avgSpikeLoad = spikeRecords.reduce((acc, r) => acc + r.loadPercentage, 0) / spikeRecords.length;
+    
+    this.spikeModel = {
+      threshold: 95,
+      avgSpikeLoad,
+      totalSpikes: spikeRecords.length,
+      spikeRate: spikeRecords.length / this.trainingData.length
+    };
+    
+    return {
+      trainingRecords: this.trainingData.length,
+      spikeCount: spikeRecords.length,
+      spikeRate: (this.spikeModel.spikeRate * 100).toFixed(2) + '%',
+      avgSpikeLoad: avgSpikeLoad.toFixed(1) + '%'
+    };
+  }
+
+  predictLoad(feederId, hour) {
+    if (!this.forecastModel) return null;
+    
+    const key = `${feederId}-${hour}`;
+    const stats = this.forecastModel.feederStats[key];
+    
+    if (!stats) return null;
+    
+    // Return prediction with confidence interval
+    return {
+      predicted: stats.mean,
+      lower: stats.mean - stats.std,
+      upper: stats.mean + stats.std
+    };
+  }
+
+  detectSpike(load) {
+    if (!this.spikeModel) return { isSpike: false, confidence: 0 };
+    
+    const confidence = Math.min(100, Math.max(0, 
+      ((load - this.spikeModel.threshold) / this.spikeModel.threshold) * 100
+    ));
+    
+    return {
+      isSpike: load > this.spikeModel.threshold,
+      confidence: Math.abs(confidence)
+    };
+  }
+
+  optimizeDERDispatch(feederId, requiredReductionKw) {
+    const availableDers = this.derCatalogue
+      .filter(der => der.feederId === feederId && der.responseTimeSec <= 5 && der.status === 'Ready')
+      .sort((a, b) => (b.capacityKw / b.costPerKwh) - (a.capacityKw / a.costPerKwh));
+    
+    const selected = [];
+    let totalCapacity = 0;
+    
+    for (const der of availableDers) {
+      if (totalCapacity >= requiredReductionKw) break;
+      selected.push(der);
+      totalCapacity += der.capacityKw;
+    }
+    
+    const obpIds = selected.map(() => `OBP-${Math.floor(Math.random() * 90000) + 10000}`);
+    
+    return { selected, totalCapacity, obpIds };
+  }
+}
+
+// DASHBOARD COMPONENT
+
+const GridFlexibilityDashboard = () => {
+  const [mlEngine] = useState(() => new GridMLEngine());
+  const [isTraining, setIsTraining] = useState(false);
+  const [trainingProgress, setTrainingProgress] = useState(0);
+  const [trainingStats, setTrainingStats] = useState(null);
+  const [datasetSize, setDatasetSize] = useState({ days: 30, feeders: 5 });
+  
+  const [realtimeData, setRealtimeData] = useState([]);
+  const [isMonitoring, setIsMonitoring] = useState(false);
+  const [alerts, setAlerts] = useState([]);
+  const [derStatus, setDerStatus] = useState([]);
+  const [activations, setActivations] = useState([]);
+  const [systemMetrics, setSystemMetrics] = useState({
+    avgResponseTime: 0,
+    activeAlerts: 0,
+    derActivated: 0,
+    loadReduced: 0,
+    totalActivations: 0
+  });
+  
+  const [selectedView, setSelectedView] = useState('monitoring'); // 'monitoring' or 'training'
+  const monitoringInterval = useRef(null);
+
+  const handleTraining = async () => {
+    setIsTraining(true);
+    setTrainingProgress(0);
+    
+    setTrainingProgress(20);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    mlEngine.generateDataset(datasetSize.days, datasetSize.feeders);
+    
+    setTrainingProgress(40);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const ders = mlEngine.generateDERCatalogue(datasetSize.feeders);
+    setDerStatus(ders);
+    
+    setTrainingProgress(60);
+    await new Promise(resolve => setTimeout(resolve, 800));
+    const stats = mlEngine.trainModels();
+    
+    setTrainingProgress(100);
+    setTrainingStats(stats);
+    setIsTraining(false);
+    
+    initializeRealtimeData();
+  };
+
+  const initializeRealtimeData = () => {
+    const data = [];
+    const now = Date.now();
+    
+    for (let i = 11; i >= 0; i--) {
+      const time = new Date(now - i * 5000);
+      const dataPoint = {
+        time: time.toLocaleTimeString(),
+        timestamp: time
+      };
+      
+      for (let f = 1; f <= datasetSize.feeders; f++) {
+        dataPoint[`feeder${f}`] = 75 + Math.random() * 15;
+      }
+      dataPoint.threshold = 95;
+      
+      data.push(dataPoint);
+    }
+    
+    setRealtimeData(data);
+  };
+
+  useEffect(() => {
+    if (isMonitoring && trainingStats) {
+      monitoringInterval.current = setInterval(() => {
+        setRealtimeData(prev => {
+          const newData = [...prev.slice(1)];
+          const now = new Date();
+          const dataPoint = {
+            time: now.toLocaleTimeString(),
+            timestamp: now,
+            threshold: 95
+          };
+          
+          for (let f = 1; f <= datasetSize.feeders; f++) {
+            const feederId = `Feeder-${f}`;
+            const hour = now.getHours();
+            
+            const prediction = mlEngine.predictLoad(feederId, hour);
+            const baseLoad = prediction ? prediction.predicted : 80;
+            
+            let load = baseLoad + (Math.random() - 0.5) * 8;
+            
+            if (Math.random() < 0.08) {
+              load += Math.random() * 20 + 5;
+            }
+            
+            load = Math.max(40, Math.min(105, load));
+            dataPoint[`feeder${f}`] = load;
+            
+            const spikeDetection = mlEngine.detectSpike(load);
+            
+            if (spikeDetection.isSpike && Math.random() > 0.4) {
+              const alertId = `ALERT-${Date.now()}-${f}`;
+              
+              setAlerts(prevAlerts => [{
+                id: alertId,
+                feeder: feederId,
+                load: load.toFixed(1),
+                timestamp: now.toISOString(),
+                status: 'detecting',
+                confidence: spikeDetection.confidence
+              }, ...prevAlerts.slice(0, 9)]);
+              
+              // Simulate agent response
+              setTimeout(() => {
+                setAlerts(prev => prev.map(a => 
+                  a.id === alertId ? {...a, status: 'optimizing'} : a
+                ));
+              }, 800);
+              
+              setTimeout(() => {
+                setAlerts(prev => prev.map(a => 
+                  a.id === alertId ? {...a, status: 'dispatching'} : a
+                ));
+                
+                // Optimize DER dispatch
+                const requiredReduction = (load - 90) * 0.8; // Reduce to safe level
+                const { selected, totalCapacity, obpIds } = mlEngine.optimizeDERDispatch(
+                  feederId, 
+                  requiredReduction
+                );
+                
+                // Update DER status
+                setDerStatus(prev => prev.map(der => {
+                  if (selected.find(s => s.derId === der.derId)) {
+                    return { ...der, status: 'Active' };
+                  }
+                  return der;
+                }));
+                
+                // Log activation
+                setActivations(prevAct => [{
+                  id: `ACT-${Date.now()}`,
+                  obpIds: obpIds,
+                  feeder: feederId,
+                  derActivated: selected.map(d => d.derId),
+                  loadReduced: totalCapacity.toFixed(1),
+                  timestamp: now.toISOString(),
+                  responseTime: (Math.random() * 1.5 + 2.5).toFixed(2)
+                }, ...prevAct.slice(0, 19)]);
+                
+                // Update metrics
+                setSystemMetrics(prev => ({
+                  ...prev,
+                  totalActivations: prev.totalActivations + 1,
+                  loadReduced: totalCapacity
+                }));
+                
+              }, 1800);
+              
+              setTimeout(() => {
+                setAlerts(prev => prev.map(a => 
+                  a.id === alertId ? {...a, status: 'resolved', responseTime: (Math.random() * 1.5 + 2.5).toFixed(2)} : a
+                ));
+                
+                // Reset DER status after some time
+                setTimeout(() => {
+                  setDerStatus(prev => prev.map(der => 
+                    der.status === 'Active' ? { ...der, status: 'Ready' } : der
+                  ));
+                }, 10000);
+              }, 3500);
+            }
+          }
+          
+          return [...newData, dataPoint];
+        });
+        
+        setSystemMetrics(prev => ({
+          ...prev,
+          avgResponseTime: 2.5 + Math.random() * 1.5,
+          activeAlerts: alerts.filter(a => a.status !== 'resolved').length,
+          derActivated: derStatus.filter(d => d.status === 'Active').length
+        }));
+        
+      }, 5000);
+    }
+    
+    return () => {
+      if (monitoringInterval.current) {
+        clearInterval(monitoringInterval.current);
+      }
+    };
+  }, [isMonitoring, trainingStats, datasetSize.feeders]);
+
+  const toggleMonitoring = () => {
+    if (!trainingStats) {
+      alert('Please train the model first!');
+      return;
+    }
+    setIsMonitoring(!isMonitoring);
+  };
+
+  const downloadDataset = () => {
+    if (!mlEngine.trainingData.length) {
+      alert('No dataset available. Please train the model first.');
+      return;
+    }
+    
+    const csvContent = [
+      Object.keys(mlEngine.trainingData[0]).join(','),
+      ...mlEngine.trainingData.map(row => Object.values(row).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `grid_dataset_${datasetSize.days}days_${datasetSize.feeders}feeders.csv`;
+    a.click();
+  };
+
+  const downloadDERCatalogue = () => {
+    if (!derStatus.length) {
+      alert('No DER catalogue available. Please train the model first.');
+      return;
+    }
+    
+    const csvContent = [
+      Object.keys(derStatus[0]).join(','),
+      ...derStatus.map(row => Object.values(row).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `der_catalogue_${datasetSize.feeders}feeders.csv`;
+    a.click();
+  };
+
+  const getStatusColor = (status) => {
+    switch(status) {
+      case 'detecting': return 'text-yellow-600 bg-yellow-100';
+      case 'optimizing': return 'text-blue-600 bg-blue-100';
+      case 'dispatching': return 'text-orange-600 bg-orange-100';
+      case 'resolved': return 'text-green-600 bg-green-100';
+      default: return 'text-gray-600 bg-gray-100';
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h1 className="text-4xl font-bold text-gray-900 mb-2">
+                Grid Flexibility AI Platform
+              </h1>
+              <p className="text-gray-600">
+                ML-Powered Demand Response with Real-time Feeder Monitoring
+              </p>
+            </div>
+            <Activity className="text-blue-600" size={48} />
+          </div>
+          
+          {/* Navigation */}
+          <div className="flex gap-4 mt-4">
+            <button
+              onClick={() => setSelectedView('training')}
+              className={`px-6 py-2 rounded-lg font-medium transition-all ${
+                selectedView === 'training'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+            >
+              <Database className="inline mr-2" size={18} />
+              Training & Dataset
+            </button>
+            <button
+              onClick={() => setSelectedView('monitoring')}
+              className={`px-6 py-2 rounded-lg font-medium transition-all ${
+                selectedView === 'monitoring'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+            >
+              <Activity className="inline mr-2" size={18} />
+              Real-time Monitoring
+            </button>
+          </div>
+        </div>
+
+        {/* Training View */}
+        {selectedView === 'training' && (
+          <div className="space-y-6">
+            {/* Training Configuration */}
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
+                <Settings size={24} />
+                Dataset Configuration
+              </h2>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Number of Days (Training Period)
+                  </label>
+                  <input
+                    type="number"
+                    value={datasetSize.days}
+                    onChange={(e) => setDatasetSize(prev => ({ ...prev, days: parseInt(e.target.value) }))}
+                    min="7"
+                    max="365"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    disabled={isTraining}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Records per day: {datasetSize.feeders * 288} (5-min intervals)
+                  </p>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Number of Feeders
+                  </label>
+                  <input
+                    type="number"
+                    value={datasetSize.feeders}
+                    onChange={(e) => setDatasetSize(prev => ({ ...prev, feeders: parseInt(e.target.value) }))}
+                    min="1"
+                    max="10"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    disabled={isTraining}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Total records: {(datasetSize.days * datasetSize.feeders * 288).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-4">
+                <button
+                  onClick={handleTraining}
+                  disabled={isTraining}
+                  className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-3 rounded-lg font-medium hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md"
+                >
+                  {isTraining ? (
+                    <>
+                      <RefreshCw className="inline mr-2 animate-spin" size={18} />
+                      Training... {trainingProgress}%
+                    </>
+                  ) : (
+                    <>
+                      <Play className="inline mr-2" size={18} />
+                      Generate Dataset & Train Models
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {isTraining && (
+                <div className="mt-4">
+                  <div className="w-full bg-gray-200 rounded-full h-3">
+                    <div
+                      className="bg-gradient-to-r from-blue-500 to-blue-600 h-3 rounded-full transition-all duration-500"
+                      style={{ width: `${trainingProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Training Results */}
+            {trainingStats && (
+              <div className="bg-white rounded-lg shadow-lg p-6">
+                <h2 className="text-2xl font-bold mb-4">Training Results</h2>
+                
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-lg border border-blue-200">
+                    <p className="text-sm text-blue-700 font-medium">Total Records</p>
+                    <p className="text-3xl font-bold text-blue-900">{trainingStats.trainingRecords.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-gradient-to-br from-orange-50 to-orange-100 p-4 rounded-lg border border-orange-200">
+                    <p className="text-sm text-orange-700 font-medium">Spike Events</p>
+                    <p className="text-3xl font-bold text-orange-900">{trainingStats.spikeCount.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-lg border border-green-200">
+                    <p className="text-sm text-green-700 font-medium">Spike Rate</p>
+                    <p className="text-3xl font-bold text-green-900">{trainingStats.spikeRate}</p>
+                  </div>
+                  <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg border border-purple-200">
+                    <p className="text-sm text-purple-700 font-medium">Avg Spike Load</p>
+                    <p className="text-3xl font-bold text-purple-900">{trainingStats.avgSpikeLoad}</p>
+                  </div>
+                </div>
+
+                <div className="flex gap-4">
+                  <button
+                    onClick={downloadDataset}
+                    className="flex-1 bg-green-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-green-700 transition-all shadow-md"
+                  >
+                    <Download className="inline mr-2" size={18} />
+                    Download Training Dataset (CSV)
+                  </button>
+                  <button
+                    onClick={downloadDERCatalogue}
+                    className="flex-1 bg-purple-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-purple-700 transition-all shadow-md"
+                  >
+                    <Download className="inline mr-2" size={18} />
+                    Download DER Catalogue (CSV)
+                  </button>
+                </div>
+
+                <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <p className="text-green-800 font-medium flex items-center gap-2">
+                    <CheckCircle size={20} />
+                    Model trained successfully! Switch to "Real-time Monitoring" to see the agent in action.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* DER Catalogue Preview */}
+            {derStatus.length > 0 && (
+              <div className="bg-white rounded-lg shadow-lg p-6">
+                <h2 className="text-2xl font-bold mb-4">DER Catalogue ({derStatus.length} assets)</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-96 overflow-y-auto">
+                  {derStatus.slice(0, 12).map(der => (
+                    <div key={der.derId} className="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-semibold text-sm">{der.derId}</span>
+                        <Battery size={16} className="text-blue-500" />
+                      </div>
+                      <p className="text-xs text-gray-600">Type: {der.type}</p>
+                      <p className="text-xs text-gray-600">Capacity: {der.capacityKw} kW</p>
+                      <p className="text-xs text-gray-600">Response: {der.responseTimeSec.toFixed(1)}s</p>
+                      <p className="text-xs text-gray-600">Location: {der.feederId}</p>
+                    </div>
+                  ))}
+                </div>
+                {derStatus.length > 12 && (
+                  <p className="text-sm text-gray-500 mt-4 text-center">
+                    Showing 12 of {derStatus.length} DERs. Download CSV for complete catalogue.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Monitoring View */}
+        {selectedView === 'monitoring' && (
+          <div className="space-y-6">
+            {/* Control Panel */}
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold">Real-time Monitoring Control</h2>
+                  <p className="text-gray-600 mt-1">
+                    {isMonitoring ? 'Agent is actively monitoring feeders' : 'Start monitoring to see live data'}
+                  </p>
+                </div>
+                <button
+                  onClick={toggleMonitoring}
+                  disabled={!trainingStats}
+                  className={`px-8 py-4 rounded-lg font-bold text-lg transition-all shadow-lg ${
+                    isMonitoring
+                      ? 'bg-red-600 hover:bg-red-700 text-white'
+                      : 'bg-green-600 hover:bg-green-700 text-white'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  {isMonitoring ? (
+                    <>
+                      <Activity className="inline mr-2 animate-pulse" size={24} />
+                      Stop Monitoring
+                    </>
+                  ) : (
+                    <>
+                      <Play className="inline mr-2" size={24} />
+                      Start Monitoring
+                    </>
+                  )}
+                </button>
+              </div>
+              
+              {!trainingStats && (
+                <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p className="text-yellow-800 flex items-center gap-2">
+                    <AlertTriangle size={20} />
+                    Please train the model first in the "Training & Dataset" tab
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* System Metrics */}
+            {trainingStats && (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                  <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-6 rounded-lg shadow-lg">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm opacity-90">Avg Response Time</p>
+                        <p className="text-3xl font-bold">{systemMetrics.avgResponseTime.toFixed(1)}s</p>
+                        <p className="text-xs opacity-75 mt-1">Target: &lt;5s</p>
+                      </div>
+                      <Clock size={40} className="opacity-80" />
+                    </div>
+                  </div>
+                  
+                  <div className="bg-gradient-to-br from-orange-500 to-orange-600 text-white p-6 rounded-lg shadow-lg">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm opacity-90">Active Alerts</p>
+                        <p className="text-3xl font-bold">{systemMetrics.activeAlerts}</p>
+                        <p className="text-xs opacity-75 mt-1">In Progress</p>
+                      </div>
+                      <AlertTriangle size={40} className="opacity-80" />
+                    </div>
+                  </div>
+                  
+                  <div className="bg-gradient-to-br from-green-500 to-green-600 text-white p-6 rounded-lg shadow-lg">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm opacity-90">DERs Active</p>
+                        <p className="text-3xl font-bold">{systemMetrics.derActivated}</p>
+                        <p className="text-xs opacity-75 mt-1">Currently Dispatched</p>
+                      </div>
+                      <Zap size={40} className="opacity-80" />
+                    </div>
+                  </div>
+                  
+                  <div className="bg-gradient-to-br from-purple-500 to-purple-600 text-white p-6 rounded-lg shadow-lg">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm opacity-90">Load Reduced</p>
+                        <p className="text-3xl font-bold">{systemMetrics.loadReduced.toFixed(0)}</p>
+                        <p className="text-xs opacity-75 mt-1">kW</p>
+                      </div>
+                      <TrendingUp size={40} className="opacity-80" />
+                    </div>
+                  </div>
+                  
+                  <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 text-white p-6 rounded-lg shadow-lg">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm opacity-90">Total Activations</p>
+                        <p className="text-3xl font-bold">{systemMetrics.totalActivations}</p>
+                        <p className="text-xs opacity-75 mt-1">Since Start</p>
+                      </div>
+                      <CheckCircle size={40} className="opacity-80" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Real-time Feeder Load Chart */}
+                <div className="bg-white rounded-lg shadow-lg p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-2xl font-bold">Real-time Feeder Load Monitoring</h2>
+                    {isMonitoring && (
+                      <div className="flex items-center gap-2 text-green-600">
+                        <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                        <span className="font-medium">Live (5s refresh)</span>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {realtimeData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={400}>
+                      <LineChart data={realtimeData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                        <XAxis 
+                          dataKey="time" 
+                          tick={{ fontSize: 12 }}
+                          stroke="#666"
+                        />
+                        <YAxis 
+                          label={{ value: 'Load (%)', angle: -90, position: 'insideLeft' }}
+                          domain={[40, 110]}
+                          tick={{ fontSize: 12 }}
+                          stroke="#666"
+                        />
+                        <Tooltip 
+                          contentStyle={{ 
+                            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                            border: '1px solid #ccc',
+                            borderRadius: '8px',
+                            padding: '10px'
+                          }}
+                        />
+                        <Legend />
+                        {Array.from({ length: datasetSize.feeders }, (_, i) => (
+                          <Line 
+                            key={i}
+                            type="monotone" 
+                            dataKey={`feeder${i + 1}`}
+                            stroke={['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'][i % 5]}
+                            strokeWidth={2.5}
+                            name={`Feeder-${i + 1}`}
+                            dot={false}
+                          />
+                        ))}
+                        <Line 
+                          type="monotone" 
+                          dataKey="threshold" 
+                          stroke="#ef4444" 
+                          strokeWidth={3}
+                          strokeDasharray="8 8" 
+                          name="Threshold (95%)"
+                          dot={false}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="h-96 flex items-center justify-center text-gray-400">
+                      <div className="text-center">
+                        <Activity size={64} className="mx-auto mb-4 opacity-50" />
+                        <p>Start monitoring to see real-time data</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Alerts and DER Status */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Active Alerts */}
+                  <div className="bg-white rounded-lg shadow-lg p-6">
+                    <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                      <AlertTriangle size={24} className="text-orange-500" />
+                      Agent Response Pipeline
+                    </h2>
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {alerts.length === 0 ? (
+                        <div className="text-center py-8 text-gray-400">
+                          <CheckCircle size={48} className="mx-auto mb-2 opacity-50" />
+                          <p>No active alerts</p>
+                          <p className="text-sm">All feeders operating normally</p>
+                        </div>
+                      ) : (
+                        alerts.map(alert => (
+                          <div key={alert.id} className="border-2 border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="font-bold text-gray-800">{alert.feeder}</span>
+                              <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${getStatusColor(alert.status)}`}>
+                                {alert.status}
+                              </span>
+                            </div>
+                            <div className="text-sm space-y-1">
+                              <p className="text-gray-700">
+                                <span className="font-medium">Load:</span> {alert.load}% 
+                                <span className="text-red-600 font-semibold ml-2">⚠ SPIKE</span>
+                              </p>
+                              <p className="text-gray-600">
+                                <span className="font-medium">Confidence:</span> {alert.confidence?.toFixed(1)}%
+                              </p>
+                              <p className="text-gray-500 text-xs">
+                                {new Date(alert.timestamp).toLocaleTimeString()}
+                              </p>
+                              {alert.responseTime && (
+                                <p className="text-green-600 font-semibold text-sm mt-2">
+                                  ✓ Resolved in {alert.responseTime}s
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* DER Status */}
+                  <div className="bg-white rounded-lg shadow-lg p-6">
+                    <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                      <Battery size={24} className="text-blue-500" />
+                      DER Fleet Status
+                    </h2>
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {derStatus.slice(0, 8).map(der => (
+                        <div key={der.derId} className="border-2 border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <Zap size={16} className={der.status === 'Active' ? 'text-green-500' : 'text-gray-400'} />
+                              <span className="font-bold text-sm">{der.derId}</span>
+                            </div>
+                            <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                              der.status === 'Active' 
+                                ? 'bg-green-100 text-green-700' 
+                                : 'bg-gray-100 text-gray-600'
+                            }`}>
+                              {der.status}
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-600 space-y-0.5">
+                            <p><span className="font-medium">Type:</span> {der.type}</p>
+                            <p><span className="font-medium">Capacity:</span> {der.capacityKw} kW</p>
+                            <p><span className="font-medium">Response:</span> {der.responseTimeSec.toFixed(1)}s</p>
+                            <p><span className="font-medium">Location:</span> {der.feederId}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-3 text-center">
+                      Showing 8 of {derStatus.length} DERs
+                    </p>
+                  </div>
+                </div>
+
+                {/* Activation History */}
+                <div className="bg-white rounded-lg shadow-lg p-6">
+                  <h2 className="text-xl font-bold mb-4">DER Activation History (P415 VLP / P444 Settlement)</h2>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">OBP IDs</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Feeder</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">DERs Activated</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Load Reduced</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Response Time</th>
+                          <th className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Timestamp</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {activations.length === 0 ? (
+                          <tr>
+                            <td colSpan="6" className="px-4 py-8 text-center text-gray-400">
+                              No activations yet. Monitoring will trigger DER dispatch when spikes are detected.
+                            </td>
+                          </tr>
+                        ) : (
+                          activations.map(act => (
+                            <tr key={act.id} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 text-sm">
+                                <div className="font-mono text-xs text-blue-600">
+                                  {act.obpIds.map((id, idx) => (
+                                    <div key={idx}>{id}</div>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-sm font-medium">{act.feeder}</td>
+                              <td className="px-4 py-3 text-sm">
+                                <div className="text-xs">
+                                  {act.derActivated.map((der, idx) => (
+                                    <div key={idx} className="text-gray-600">{der}</div>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-sm font-bold text-green-600">{act.loadReduced} kW</td>
+                              <td className="px-4 py-3 text-sm">
+                                <span className={`font-bold ${parseFloat(act.responseTime) < 5 ? 'text-green-600' : 'text-orange-600'}`}>
+                                  {act.responseTime}s
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-sm text-gray-500">
+                                {new Date(act.timestamp).toLocaleString()}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="bg-white rounded-lg shadow-lg p-4 mt-6">
+          <div className="text-center text-sm text-gray-600">
+            <p className="font-medium">Grid Flexibility AI Platform v1.0</p>
+            <p className="text-xs mt-1">
+              Beckn Protocol Integration | P415 VLP Activation | P444 Settlement Traceability | Sub-5s SLA
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default GridFlexibilityDashboard;
